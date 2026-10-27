@@ -2,45 +2,78 @@ import cv2
 import numpy as np
 import streamlit as st
 
-def apply_precise_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.0):
-    """Aplica a perspectiva e gera uma máscara com curvatura profunda para simular o cilindro."""
+def warp_triangle(img_src, img_dst, tri_src, tri_dst):
+    """Deforma triângulos individuais para criar a malha abulada contínua."""
+    r_dst = cv2.boundingRect(tri_dst)
+    x, y, w, h = r_dst
+    if x < 0 or y < 0 or x + w > img_dst.shape[1] or y + h > img_dst.shape[0] or w <= 0 or h <= 0:
+        return
+
+    tri_dst_cropped = tri_dst.copy()
+    tri_dst_cropped[:, 0] -= x
+    tri_dst_cropped[:, 1] -= y
+
+    mat = cv2.getAffineTransform(tri_src, tri_dst_cropped)
+    warped = cv2.warpAffine(img_src, mat, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+    mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.fillConvexPoly(mask, np.int32(np.round(tri_dst_cropped)), 255, lineType=cv2.LINE_8)
+    kernel = np.ones((2, 2), np.uint8)
+    mask = cv2.dilate(mask, kernel, iterations=1)
+
+    roi = img_dst[y:y+h, x:x+w]
+    mask_inv = cv2.bitwise_not(mask)
+    img_bg = cv2.bitwise_and(roi, roi, mask=mask_inv)
+    img_fg = cv2.bitwise_and(warped, warped, mask=mask)
+    img_dst[y:y+h, x:x+w] = cv2.add(img_bg, img_fg)
+
+def apply_mesh_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.0, grid_size=16):
+    """
+    Deforma a PRÓPRIA ARTE em uma malha curva (abulamento real da imagem).
+    """
     h_fg, w_fg = fg.shape[:2]
-    pts_src = np.array([[0, 0], [w_fg, 0], [w_fg, h_fg], [0, h_fg]], dtype=float)
+    TL, TR, BR, BL = pts_dst[0], pts_dst[1], pts_dst[2], pts_dst[3]
+
+    dst_pts = np.zeros((grid_size + 1, grid_size + 1, 2), dtype=np.float32)
+    src_pts = np.zeros((grid_size + 1, grid_size + 1, 2), dtype=np.float32)
+
+    h_ref = np.linalg.norm(BL - TL)
+
+    for j in range(grid_size + 1):
+        v = j / grid_size
+        for i in range(grid_size + 1):
+            u = i / grid_size
+            
+            # Posição linear base na perspectiva
+            top_p = (1.0 - u) * TL + u * TR
+            bot_p = (1.0 - u) * BL + u * BR
+            p_base = (1.0 - v) * top_p + v * bot_p
+
+            # Aplica a curvatura abulada na arte de acordo com a posição horizontal (u)
+            arc_factor_top = np.sin(u * np.pi) * arc_top * h_ref
+            arc_factor_bot = np.sin(u * np.pi) * arc_bottom * h_ref
+            
+            # Interpola o abulamento entre o topo e a base
+            arc_offset = (1.0 - v) * arc_factor_top + v * arc_factor_bot
+            
+            dst_pts[j, i] = [p_base[0], p_base[1] + arc_offset]
+            src_pts[j, i] = [u * w_fg, v * h_fg]
+
+    result = bg.copy()
     
-    h_matrix, _ = cv2.findHomography(pts_src, pts_dst)
-    warped = cv2.warpPerspective(fg, h_matrix, (bg.shape[1], bg.shape[0]))
-    
-    mask = np.zeros((bg.shape[0], bg.shape[1]), dtype=np.uint8)
-    
-    n_pts = 50
-    curve_points = []
-    
-    h_ref = np.linalg.norm(pts_dst[3] - pts_dst[0])
-    
-    # Curva Superior (Topo da Caneca)
-    tl, tr = pts_dst[0], pts_dst[1]
-    for i in range(n_pts + 1):
-        t = i / n_pts
-        p = (1 - t) * tl + t * tr
-        arc = np.sin(t * np.pi) * h_ref * arc_top
-        curve_points.append([p[0], p[1] + arc])
-        
-    # Curva Inferior (Base da Caneca)
-    br, bl = pts_dst[2], pts_dst[3]
-    for i in range(n_pts + 1):
-        t = i / n_pts
-        p = (1 - t) * br + t * bl
-        arc = np.sin(t * np.pi) * h_ref * arc_bottom
-        curve_points.append([p[0], p[1] + arc])
-        
-    curved_poly = np.array(curve_points, dtype=np.int32)
-    cv2.fillConvexPoly(mask, curved_poly, 255)
-    
-    mask = cv2.GaussianBlur(mask, (3, 3), 0)
-    
-    bg_bg = cv2.bitwise_and(bg, bg, mask=cv2.bitwise_not(mask))
-    fg_fg = cv2.bitwise_and(warped, warped, mask=mask)
-    return cv2.add(bg_bg, fg_fg)
+    # Renderiza a malha 3D sobre o fundo
+    for j in range(grid_size):
+        for i in range(grid_size):
+            sp0, sp1, sp2, sp3 = src_pts[j, i], src_pts[j, i+1], src_pts[j+1, i], src_pts[j+1, i+1]
+            dp0, dp1, dp2, dp3 = dst_pts[j, i], dst_pts[j, i+1], dst_pts[j+1, i], dst_pts[j+1, i+1]
+
+            tri_src1, tri_dst1 = np.float32([sp0, sp1, sp2]), np.float32([dp0, dp1, dp2])
+            warp_triangle(fg, result, tri_src1, tri_dst1)
+
+            tri_src2, tri_dst2 = np.float32([sp1, sp3, sp2]), np.float32([dp1, dp3, dp2])
+            warp_triangle(fg, result, tri_src2, tri_dst2)
+
+    return result
 
 def crop_art(art, start_pct, end_pct):
     """Recorta a fatia exata da arte."""
@@ -67,7 +100,7 @@ else:
         art = cv2.imdecode(file_bytes, 1)
 
         if st.button("Gerar Mockup 🚀"):
-            with st.spinner("Gerando mockup com curvatura precisa..."):
+            with st.spinner("Deformando arte e gerando curvatura 3D..."):
                 bh, bw = base_image.shape[:2]
 
                 # 1. Topo Plano (Inclinado)
@@ -76,9 +109,9 @@ else:
                     [bw*0.612, bh*0.300], [bw*0.082, bh*0.435]
                 ], dtype=float)
                 
-                # 2. Caneca Esquerda REAJUSTADA (Superior esquerdo mais p/ esquerda, superior direito subido)
+                # 2. Caneca Esquerda
                 pts_left = np.array([
-                    [bw*0.068, bh*0.605], [bw*0.312, bh*0.425], 
+                    [bw*0.068, bh*0.595], [bw*0.312, bh*0.425], 
                     [bw*0.418, bh*0.795], [bw*0.180, bh*0.935]
                 ], dtype=float)
                 
@@ -94,22 +127,22 @@ else:
                     [bw*0.915, bh*0.885], [bw*0.665, bh*0.885]
                 ], dtype=float)
 
-                # APLICAÇÃO DAS MÁSCARAS E CURVATURAS
+                # APLICAÇÃO DA DEFORMAÇÃO NA PRÓPRIA IMAGEM
 
-                # 1. Visão Superior Plana
-                result = apply_precise_curved_perspective(base_image, art, pts_top, arc_top=0.0, arc_bottom=0.0)
+                # 1. Topo Plano
+                result = apply_mesh_curved_perspective(base_image, art, pts_top, arc_top=0.0, arc_bottom=0.0)
 
-                # 2. Caneca Direita
+                # 2. Caneca Direita (Abulamento leve)
                 art_right = crop_art(art, 0.52, 1.0)
-                result = apply_precise_curved_perspective(result, art_right, pts_right, arc_top=0.03, arc_bottom=0.03)
+                result = apply_mesh_curved_perspective(result, art_right, pts_right, arc_top=0.02, arc_bottom=0.02)
 
-                # 3. Caneca Centro
+                # 3. Caneca Centro (Abulamento leve)
                 art_center = crop_art(art, 0.25, 0.75)
-                result = apply_precise_curved_perspective(result, art_center, pts_center, arc_top=0.025, arc_bottom=0.025)
+                result = apply_mesh_curved_perspective(result, art_center, pts_center, arc_top=0.015, arc_bottom=0.015)
 
-                # 4. Caneca Esquerda (arc_top ajustado para -0.12 para abular o meio para baixo)
+                # 4. Caneca Esquerda (ABULAMENTO PROFUNDO NA PRÓPRIA ARTE: arc_top positivo puxa os pixels para baixo)
                 art_left = crop_art(art, 0.0, 0.48)
-                result = apply_precise_curved_perspective(result, art_left, pts_left, arc_top=-0.120, arc_bottom=0.060)
+                result = apply_mesh_curved_perspective(result, art_left, pts_left, arc_top=0.100, arc_bottom=0.040)
 
                 # Nome do Cliente
                 if client_name:
