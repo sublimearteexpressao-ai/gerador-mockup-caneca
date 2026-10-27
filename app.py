@@ -44,16 +44,13 @@ def apply_mesh_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.0, 
         for i in range(grid_size + 1):
             u = i / grid_size
             
-            # Posição linear base na perspectiva
             top_p = (1.0 - u) * TL + u * TR
             bot_p = (1.0 - u) * BL + u * BR
             p_base = (1.0 - v) * top_p + v * bot_p
 
-            # Aplica a curvatura abulada na arte de acordo com a posição horizontal (u)
             arc_factor_top = np.sin(u * np.pi) * arc_top * h_ref
             arc_factor_bot = np.sin(u * np.pi) * arc_bottom * h_ref
             
-            # Interpola o abulamento entre o topo e a base
             arc_offset = (1.0 - v) * arc_factor_top + v * arc_factor_bot
             
             dst_pts[j, i] = [p_base[0], p_base[1] + arc_offset]
@@ -61,7 +58,6 @@ def apply_mesh_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.0, 
 
     result = bg.copy()
     
-    # Renderiza a malha 3D sobre o fundo
     for j in range(grid_size):
         for i in range(grid_size):
             sp0, sp1, sp2, sp3 = src_pts[j, i], src_pts[j, i+1], src_pts[j+1, i], src_pts[j+1, i+1]
@@ -100,7 +96,7 @@ else:
         art = cv2.imdecode(file_bytes, 1)
 
         if st.button("Gerar Mockup 🚀"):
-            with st.spinner("Deformando arte e gerando curvatura 3D..."):
+            with st.spinner("Ajustando extremidades e gerando mockup..."):
                 bh, bw = base_image.shape[:2]
 
                 # 1. Topo Plano (Inclinado)
@@ -109,10 +105,10 @@ else:
                     [bw*0.612, bh*0.300], [bw*0.082, bh*0.435]
                 ], dtype=float)
                 
-                # 2. Caneca Esquerda
+                # 2. Caneca Esquerda RECALIBRADA (Canto sup. direito subido até bh*0.400 e inf. direito estendido)
                 pts_left = np.array([
-                    [bw*0.068, bh*0.595], [bw*0.312, bh*0.425], 
-                    [bw*0.418, bh*0.795], [bw*0.180, bh*0.935]
+                    [bw*0.068, bh*0.600], [bw*0.320, bh*0.400], 
+                    [bw*0.428, bh*0.790], [bw*0.188, bh*0.930]
                 ], dtype=float)
                 
                 # 3. Caneca Centro
@@ -132,17 +128,17 @@ else:
                 # 1. Topo Plano
                 result = apply_mesh_curved_perspective(base_image, art, pts_top, arc_top=0.0, arc_bottom=0.0)
 
-                # 2. Caneca Direita (Abulamento leve)
+                # 2. Caneca Direita
                 art_right = crop_art(art, 0.52, 1.0)
                 result = apply_mesh_curved_perspective(result, art_right, pts_right, arc_top=0.02, arc_bottom=0.02)
 
-                # 3. Caneca Centro (Abulamento leve)
+                # 3. Caneca Centro
                 art_center = crop_art(art, 0.25, 0.75)
                 result = apply_mesh_curved_perspective(result, art_center, pts_center, arc_top=0.015, arc_bottom=0.015)
 
-                # 4. Caneca Esquerda (ABULAMENTO PROFUNDO NA PRÓPRIA ARTE: arc_top positivo puxa os pixels para baixo)
+                # 4. Caneca Esquerda (arc_top calibrado para fechar o topo interno)
                 art_left = crop_art(art, 0.0, 0.48)
-                result = apply_mesh_curved_perspective(result, art_left, pts_left, arc_top=0.100, arc_bottom=0.040)
+                result = apply_mesh_curved_perspective(result, art_left, pts_left, arc_top=0.115, arc_bottom=0.035)
 
                 # Nome do Cliente
                 if client_name:
