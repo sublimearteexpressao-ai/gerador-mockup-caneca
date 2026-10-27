@@ -2,8 +2,8 @@ import cv2
 import numpy as np
 import streamlit as st
 
-def apply_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.0):
-    """Aplica a perspectiva e recorta com arco nas bordas superior e inferior."""
+def apply_precise_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.0):
+    """Aplica a perspectiva e recorta com máscara curvada exatamente no formato da cerâmica."""
     h_fg, w_fg = fg.shape[:2]
     pts_src = np.array([[0, 0], [w_fg, 0], [w_fg, h_fg], [0, h_fg]], dtype=float)
     
@@ -12,10 +12,10 @@ def apply_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.0):
     
     mask = np.zeros((bg.shape[0], bg.shape[1]), dtype=np.uint8)
     
-    n_pts = 30
+    n_pts = 40
     curve_points = []
     
-    # Curva Superior (Topo)
+    # Curva Superior (Topo da Caneca)
     tl, tr = pts_dst[0], pts_dst[1]
     for i in range(n_pts + 1):
         t = i / n_pts
@@ -23,7 +23,7 @@ def apply_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.0):
         arc = np.sin(t * np.pi) * (pts_dst[3][1] - pts_dst[0][1]) * arc_top
         curve_points.append([p[0], p[1] + arc])
         
-    # Curva Inferior (Base)
+    # Curva Inferior (Base da Caneca)
     br, bl = pts_dst[2], pts_dst[3]
     for i in range(n_pts + 1):
         t = i / n_pts
@@ -34,7 +34,7 @@ def apply_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.0):
     curved_poly = np.array(curve_points, dtype=np.int32)
     cv2.fillConvexPoly(mask, curved_poly, 255)
     
-    # Anti-aliasing na borda
+    # Suavização para evitar serrilhado
     mask = cv2.GaussianBlur(mask, (3, 3), 0)
     
     bg_bg = cv2.bitwise_and(bg, bg, mask=cv2.bitwise_not(mask))
@@ -50,7 +50,7 @@ def crop_art(art, start_pct, end_pct):
 
 st.set_page_config(page_title="Gerador de Mockup de Caneca", layout="centered")
 
-st.title("☕ Gerador de Mockup de Caneca")
+st.title("☕ Gerador de Mockup de Caneca 3D")
 st.write("Envie a arte (20,5 x 10 cm), insira o nome do cliente e baixe seu mockup pronto!")
 
 base_image = cv2.imread("Base_em_branco.jpg")
@@ -66,37 +66,52 @@ else:
         art = cv2.imdecode(file_bytes, 1)
 
         if st.button("Gerar Mockup 🚀"):
-            with st.spinner("Processando..."):
+            with st.spinner("Gerando mockup preciso..."):
                 bh, bw = base_image.shape[:2]
 
-                # COORDENADAS RECALIBRADAS PARA FICAR 100% DENTRO DA CERÂMICA
-                pts_top = np.array([[bw*0.06, bh*0.15], [bw*0.56, bh*0.04], [bw*0.62, bh*0.30], [bw*0.08, bh*0.43]], dtype=float)
+                # COORDENADAS EXTRAÍDAS DIRETAMENTE DA IMAGEM DE REFERÊNCIA REAL
+                # 1. Topo Plano (Inclinado)
+                pts_top = np.array([
+                    [bw*0.038, bh*0.145], [bw*0.565, bh*0.025], 
+                    [bw*0.612, bh*0.300], [bw*0.082, bh*0.435]
+                ], dtype=float)
                 
-                # Caneca Esquerda: borda do fundo ajustada para não vazar na mesa
-                pts_left = np.array([[bw*0.09, bh*0.59], [bw*0.33, bh*0.46], [bw*0.40, bh*0.79], [bw*0.14, bh*0.93]], dtype=float)
+                # 2. Caneca Esquerda (Inclinada com boca oval)
+                pts_left = np.array([
+                    [bw*0.075, bh*0.605], [bw*0.312, bh*0.465], 
+                    [bw*0.425, bh*0.805], [bw*0.198, bh*0.965]
+                ], dtype=float)
                 
-                # Caneca Centro: baixado o topo para não passar do limite da borda branca
-                pts_center = np.array([[bw*0.39, bh*0.435], [bw*0.63, bh*0.435], [bw*0.63, bh*0.805], [bw*0.39, bh*0.805]], dtype=float)
+                # 3. Caneca Centro (Frontal Cilíndrica)
+                pts_center = np.array([
+                    [bw*0.378, bh*0.428], [bw*0.628, bh*0.428], 
+                    [bw*0.628, bh*0.812], [bw*0.378, bh*0.812]
+                ], dtype=float)
                 
-                # Caneca Direita: ajustada para alinhar com a margem interna
-                pts_right = np.array([[bw*0.68, bh*0.49], [bw*0.90, bh*0.49], [bw*0.90, bh*0.875], [bw*0.68, bh*0.875]], dtype=float)
+                # 4. Caneca Direita (Visão Lateral com Alça à Direita)
+                pts_right = np.array([
+                    [bw*0.665, bh*0.488], [bw*0.915, bh*0.488], 
+                    [bw*0.915, bh*0.885], [bw*0.665, bh*0.885]
+                ], dtype=float)
 
-                # 1. Topo: Plana inteira
-                result = apply_curved_perspective(base_image, art, pts_top, arc_top=0.0, arc_bottom=0.0)
+                # APLICAÇÃO DAS CAMADAS E MÁSCARAS
+                
+                # 1. Visão Superior Plana (Arte Completa)
+                result = apply_precise_curved_perspective(base_image, art, pts_top, arc_top=0.0, arc_bottom=0.0)
 
-                # 2. Caneca Direita (Fatia 55% a 100%)
-                art_right = crop_art(art, 0.55, 1.0)
-                result = apply_curved_perspective(result, art_right, pts_right, arc_top=0.015, arc_bottom=0.015)
+                # 2. Caneca Direita (Fatia 52% a 100%)
+                art_right = crop_art(art, 0.52, 1.0)
+                result = apply_precise_curved_perspective(result, art_right, pts_right, arc_top=0.015, arc_bottom=0.015)
 
                 # 3. Caneca Centro (Fatia 25% a 75%)
                 art_center = crop_art(art, 0.25, 0.75)
-                result = apply_curved_perspective(result, art_center, pts_center, arc_top=0.012, arc_bottom=0.012)
+                result = apply_precise_curved_perspective(result, art_center, pts_center, arc_top=0.012, arc_bottom=0.012)
 
-                # 4. Caneca Esquerda (Fatia 0% a 45% - Sobrepõe a do centro perfeitamente)
-                art_left = crop_art(art, 0.0, 0.45)
-                result = apply_curved_perspective(result, art_left, pts_left, arc_top=-0.018, arc_bottom=0.018)
+                # 4. Caneca Esquerda (Fatia 0% a 48% - Sobrepõe a do centro com curva cônica)
+                art_left = crop_art(art, 0.0, 0.48)
+                result = apply_precise_curved_perspective(result, art_left, pts_left, arc_top=-0.035, arc_bottom=0.025)
 
-                # Inserção do Nome do Cliente
+                # Nome do Cliente
                 if client_name:
                     font = cv2.FONT_HERSHEY_SIMPLEX
                     font_scale = bh * 0.001
