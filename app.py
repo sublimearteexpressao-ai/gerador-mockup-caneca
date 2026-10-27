@@ -26,7 +26,7 @@ def apply_perspective_crop(bg, fg, pts_dst, crop_x_start=0.0, crop_x_end=1.0):
 st.set_page_config(page_title="Gerador de Mockup de Caneca", layout="centered")
 
 st.title("☕ Gerador de Mockup de Caneca")
-st.write("Envie a arte (20,5 x 10 cm), insira o nome do cliente e baixe seu mockup pronto!")
+st.write("Envie a arte (20,5 x 10 cm), insira o nome do cliente e descarregue o seu mockup pronto!")
 
 base_image = cv2.imread("Base_em_branco.jpg")
 
@@ -41,20 +41,27 @@ else:
         art = cv2.imdecode(file_bytes, 1)
 
         if st.button("Gerar Mockup 🚀"):
-            with st.spinner("Processando..."):
+            with st.spinner("A processar..."):
                 bh, bw = base_image.shape[:2]
 
-                # AS COORDENADAS ORIGINAIS DA SKILL RESTAURADAS
                 pts_top = np.array([[bw*0.06, bh*0.15], [bw*0.56, bh*0.04], [bw*0.62, bh*0.30], [bw*0.08, bh*0.43]], dtype=float)
                 pts_left = np.array([[bw*0.07, bh*0.60], [bw*0.33, bh*0.45], [bw*0.42, bh*0.81], [bw*0.12, bh*0.96]], dtype=float)
-                pts_center = np.array([[bw*0.39, bh*0.43], [bw*0.64, bh*0.43], [bw*0.64, bh*0.81], [bw*0.39, bh*0.81]], dtype=float)
+                pts_center = np.array([[bw*0.39, Assim, bh*0.43], [bw*0.64, bh*0.43], [bw*0.64, bh*0.81], [bw*0.39, bh*0.81]], dtype=float)
                 pts_right = np.array([[bw*0.68, bh*0.48], [bw*0.90, bh*0.48], [bw*0.90, bh*0.88], [bw*0.68, bh*0.88]], dtype=float)
 
-                # Aplicando os recortes nas coordenadas corretas
+                # A ORDEM DE APLICAÇÃO É CRUCIAL PARA O EFEITO 3D:
+                # 1. Visão Superior (Solta no topo)
                 result = apply_perspective_crop(base_image, art, pts_top, 0.0, 1.0)
-                result = apply_perspective_crop(result, art, pts_left, 0.0, 0.45)
+                
+                # 2. Caneca Direita (Fundo da imagem). Alça na direita mostra o lado ESQUERDO da arte (0.0 a 0.45)
+                result = apply_perspective_crop(result, art, pts_right, 0.0, 0.45)
+                
+                # 3. Caneca Centro (Meio da imagem). Mostra o CENTRO da arte (0.25 a 0.75)
                 result = apply_perspective_crop(result, art, pts_center, 0.25, 0.75)
-                result = apply_perspective_crop(result, art, pts_right, 0.55, 1.0)
+                
+                # 4. Caneca Esquerda (Frente da imagem). TEM DE SER A ÚLTIMA para sobrepor a do centro perfeitamente!
+                # Alça na esquerda mostra o lado DIREITO da arte (0.55 a 1.0)
+                result = apply_perspective_crop(result, art, pts_left, 0.55, 1.0)
 
                 if client_name:
                     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -66,7 +73,7 @@ else:
                     cv2.putText(result, text, position, font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
 
                 result_rgb = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
-                st.image(result_rgb, caption="Seu mockup está pronto!", use_container_width=True)
+                st.image(result_rgb, caption="O seu mockup está pronto!", use_container_width=True)
 
                 _, im_png = cv2.imencode(".png", result)
                 st.download_button(
