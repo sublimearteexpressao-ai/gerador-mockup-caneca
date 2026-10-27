@@ -27,15 +27,24 @@ def warp_triangle(img_src, img_dst, tri_src, tri_dst):
     img_fg = cv2.bitwise_and(warped, warped, mask=mask)
     img_dst[y:y+h, x:x+w] = cv2.add(img_bg, img_fg)
 
-def apply_mesh_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.0, grid_size=16):
+def apply_mesh_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.0, grid_size=20):
     """
-    Deforma a PRÓPRIA ARTE em uma malha curva (abulamento real da imagem).
+    Deforma a PRÓPRIA ARTE projetando a curvatura na direção PERPENDICULAR (perfeita para ângulos inclinados).
     """
     h_fg, w_fg = fg.shape[:2]
     TL, TR, BR, BL = pts_dst[0], pts_dst[1], pts_dst[2], pts_dst[3]
 
     dst_pts = np.zeros((grid_size + 1, grid_size + 1, 2), dtype=np.float32)
     src_pts = np.zeros((grid_size + 1, grid_size + 1, 2), dtype=np.float32)
+
+    # Vetores direcionais e alturas de referência
+    vec_top = TR - TL
+    len_top = np.linalg.norm(vec_top) + 1e-6
+    normal_top = np.array([vec_top[1], -vec_top[0]]) / len_top
+
+    vec_bot = BR - BL
+    len_bot = np.linalg.norm(vec_bot) + 1e-6
+    normal_bot = np.array([vec_bot[1], -vec_bot[0]]) / len_bot
 
     h_ref = np.linalg.norm(BL - TL)
 
@@ -48,12 +57,13 @@ def apply_mesh_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.0, 
             bot_p = (1.0 - u) * BL + u * BR
             p_base = (1.0 - v) * top_p + v * bot_p
 
-            arc_factor_top = np.sin(u * np.pi) * arc_top * h_ref
-            arc_factor_bot = np.sin(u * np.pi) * arc_bottom * h_ref
+            # Aplicação do arco perpendicular ao ângulo da caneca
+            offset_top = normal_top * (np.sin(u * np.pi) * arc_top * h_ref)
+            offset_bot = normal_bot * (np.sin(u * np.pi) * arc_bottom * h_ref)
             
-            arc_offset = (1.0 - v) * arc_factor_top + v * arc_factor_bot
-            
-            dst_pts[j, i] = [p_base[0], p_base[1] + arc_offset]
+            p_curved = p_base + (1.0 - v) * offset_top + v * offset_bot
+
+            dst_pts[j, i] = p_curved
             src_pts[j, i] = [u * w_fg, v * h_fg]
 
     result = bg.copy()
@@ -96,7 +106,7 @@ else:
         art = cv2.imdecode(file_bytes, 1)
 
         if st.button("Gerar Mockup 🚀"):
-            with st.spinner("Ajustando extremidades e gerando mockup..."):
+            with st.spinner("Calculando curvatura perpendicular e gerando mockup..."):
                 bh, bw = base_image.shape[:2]
 
                 # 1. Topo Plano (Inclinado)
@@ -105,10 +115,10 @@ else:
                     [bw*0.612, bh*0.300], [bw*0.082, bh*0.435]
                 ], dtype=float)
                 
-                # 2. Caneca Esquerda RECALIBRADA (Canto sup. direito subido até bh*0.400 e inf. direito estendido)
+                # 2. Caneca Esquerda (PONTOS REAJUSTADOS PARA COBRIR DA BOCA ATÉ A BASE)
                 pts_left = np.array([
-                    [bw*0.068, bh*0.600], [bw*0.320, bh*0.400], 
-                    [bw*0.428, bh*0.790], [bw*0.188, bh*0.930]
+                    [bw*0.070, bh*0.608], [bw*0.315, bh*0.448], 
+                    [bw*0.428, bh*0.795], [bw*0.190, bh*0.955]
                 ], dtype=float)
                 
                 # 3. Caneca Centro
@@ -123,7 +133,7 @@ else:
                     [bw*0.915, bh*0.885], [bw*0.665, bh*0.885]
                 ], dtype=float)
 
-                # APLICAÇÃO DA DEFORMAÇÃO NA PRÓPRIA IMAGEM
+                # APLICAÇÃO DA DEFORMAÇÃO NA PRÓPRIA ARTE
 
                 # 1. Topo Plano
                 result = apply_mesh_curved_perspective(base_image, art, pts_top, arc_top=0.0, arc_bottom=0.0)
@@ -136,9 +146,9 @@ else:
                 art_center = crop_art(art, 0.25, 0.75)
                 result = apply_mesh_curved_perspective(result, art_center, pts_center, arc_top=0.015, arc_bottom=0.015)
 
-                # 4. Caneca Esquerda (arc_top calibrado para fechar o topo interno)
+                # 4. Caneca Esquerda (ARCO PERPENDICULAR: arc_top negativo puxa para DENTRO da boca oval)
                 art_left = crop_art(art, 0.0, 0.48)
-                result = apply_mesh_curved_perspective(result, art_left, pts_left, arc_top=0.115, arc_bottom=0.035)
+                result = apply_mesh_curved_perspective(result, art_left, pts_left, arc_top=-0.085, arc_bottom=0.035)
 
                 # Nome do Cliente
                 if client_name:
