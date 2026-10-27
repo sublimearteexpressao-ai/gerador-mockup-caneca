@@ -2,22 +2,16 @@ import cv2
 import numpy as np
 import streamlit as st
 
-def apply_curved_perspective(bg, fg, pts_dst, arc_top=0.03, arc_bottom=0.03):
-    """Aplica a perspectiva e curva suavemente as bordas superior e inferior para simular o cilindro."""
+def apply_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.0):
+    """Aplica a perspectiva e recorta com arco nas bordas superior e inferior."""
     h_fg, w_fg = fg.shape[:2]
     pts_src = np.array([[0, 0], [w_fg, 0], [w_fg, h_fg], [0, h_fg]], dtype=float)
     
-    # Homografia para encaixar nos 4 pontos da caneca
     h_matrix, _ = cv2.findHomography(pts_src, pts_dst)
     warped = cv2.warpPerspective(fg, h_matrix, (bg.shape[1], bg.shape[0]))
     
-    # Criar polígono da máscara base
-    poly_dst = pts_dst.astype(np.int32)
-    
-    # Criar malha para desenhar a curva/elipse no topo e fundo da caneca
     mask = np.zeros((bg.shape[0], bg.shape[1]), dtype=np.uint8)
     
-    # Desenhar os limites com curvatura
     n_pts = 30
     curve_points = []
     
@@ -26,7 +20,6 @@ def apply_curved_perspective(bg, fg, pts_dst, arc_top=0.03, arc_bottom=0.03):
     for i in range(n_pts + 1):
         t = i / n_pts
         p = (1 - t) * tl + t * tr
-        # Adiciona curvatura em arco para baixo/cima
         arc = np.sin(t * np.pi) * (pts_dst[3][1] - pts_dst[0][1]) * arc_top
         curve_points.append([p[0], p[1] + arc])
         
@@ -41,10 +34,9 @@ def apply_curved_perspective(bg, fg, pts_dst, arc_top=0.03, arc_bottom=0.03):
     curved_poly = np.array(curve_points, dtype=np.int32)
     cv2.fillConvexPoly(mask, curved_poly, 255)
     
-    # Suaviza a borda da máscara (Anti-aliasing)
+    # Anti-aliasing na borda
     mask = cv2.GaussianBlur(mask, (3, 3), 0)
     
-    # Aplicação no fundo
     bg_bg = cv2.bitwise_and(bg, bg, mask=cv2.bitwise_not(mask))
     fg_fg = cv2.bitwise_and(warped, warped, mask=mask)
     return cv2.add(bg_bg, fg_fg)
@@ -77,26 +69,32 @@ else:
             with st.spinner("Processando..."):
                 bh, bw = base_image.shape[:2]
 
-                # Coordenadas ajustadas exatamente aos contornos da cerâmica
+                # COORDENADAS RECALIBRADAS PARA FICAR 100% DENTRO DA CERÂMICA
                 pts_top = np.array([[bw*0.06, bh*0.15], [bw*0.56, bh*0.04], [bw*0.62, bh*0.30], [bw*0.08, bh*0.43]], dtype=float)
-                pts_left = np.array([[bw*0.07, bh*0.60], [bw*0.33, bh*0.45], [bw*0.42, bh*0.81], [bw*0.12, bh*0.96]], dtype=float)
-                pts_center = np.array([[bw*0.39, bh*0.43], [bw*0.64, bh*0.43], [bw*0.64, bh*0.81], [bw*0.39, bh*0.81]], dtype=float)
-                pts_right = np.array([[bw*0.68, bh*0.48], [bw*0.90, bh*0.48], [bw*0.90, bh*0.88], [bw*0.68, bh*0.88]], dtype=float)
+                
+                # Caneca Esquerda: borda do fundo ajustada para não vazar na mesa
+                pts_left = np.array([[bw*0.09, bh*0.59], [bw*0.33, bh*0.46], [bw*0.40, bh*0.79], [bw*0.14, bh*0.93]], dtype=float)
+                
+                # Caneca Centro: baixado o topo para não passar do limite da borda branca
+                pts_center = np.array([[bw*0.39, bh*0.435], [bw*0.63, bh*0.435], [bw*0.63, bh*0.805], [bw*0.39, bh*0.805]], dtype=float)
+                
+                # Caneca Direita: ajustada para alinhar com a margem interna
+                pts_right = np.array([[bw*0.68, bh*0.49], [bw*0.90, bh*0.49], [bw*0.90, bh*0.875], [bw*0.68, bh*0.875]], dtype=float)
 
                 # 1. Topo: Plana inteira
                 result = apply_curved_perspective(base_image, art, pts_top, arc_top=0.0, arc_bottom=0.0)
 
                 # 2. Caneca Direita (Fatia 55% a 100%)
                 art_right = crop_art(art, 0.55, 1.0)
-                result = apply_curved_perspective(result, art_right, pts_right, arc_top=0.02, arc_bottom=0.02)
+                result = apply_curved_perspective(result, art_right, pts_right, arc_top=0.015, arc_bottom=0.015)
 
                 # 3. Caneca Centro (Fatia 25% a 75%)
                 art_center = crop_art(art, 0.25, 0.75)
-                result = apply_curved_perspective(result, art_center, pts_center, arc_top=0.015, arc_bottom=0.015)
+                result = apply_curved_perspective(result, art_center, pts_center, arc_top=0.012, arc_bottom=0.012)
 
-                # 4. Caneca Esquerda (Fatia 0% a 45% - Sobrepõe a do centro)
+                # 4. Caneca Esquerda (Fatia 0% a 45% - Sobrepõe a do centro perfeitamente)
                 art_left = crop_art(art, 0.0, 0.45)
-                result = apply_curved_perspective(result, art_left, pts_left, arc_top=0.025, arc_bottom=0.025)
+                result = apply_curved_perspective(result, art_left, pts_left, arc_top=-0.018, arc_bottom=0.018)
 
                 # Inserção do Nome do Cliente
                 if client_name:
