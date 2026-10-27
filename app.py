@@ -34,7 +34,6 @@ def apply_precise_curved_perspective(bg, fg, pts_dst, arc_top=0.0, arc_bottom=0.
     curved_poly = np.array(curve_points, dtype=np.int32)
     cv2.fillConvexPoly(mask, curved_poly, 255)
     
-    # Suavização para evitar serrilhado
     mask = cv2.GaussianBlur(mask, (3, 3), 0)
     
     bg_bg = cv2.bitwise_and(bg, bg, mask=cv2.bitwise_not(mask))
@@ -69,26 +68,25 @@ else:
             with st.spinner("Gerando mockup preciso..."):
                 bh, bw = base_image.shape[:2]
 
-                # COORDENADAS EXTRAÍDAS DIRETAMENTE DA IMAGEM DE REFERÊNCIA REAL
                 # 1. Topo Plano (Inclinado)
                 pts_top = np.array([
                     [bw*0.038, bh*0.145], [bw*0.565, bh*0.025], 
                     [bw*0.612, bh*0.300], [bw*0.082, bh*0.435]
                 ], dtype=float)
                 
-                # 2. Caneca Esquerda (Inclinada com boca oval)
+                # 2. Caneca Esquerda REFINADA (Encurtada na base e alinhada ao topo da cerâmica)
                 pts_left = np.array([
-                    [bw*0.075, bh*0.605], [bw*0.312, bh*0.465], 
-                    [bw*0.425, bh*0.805], [bw*0.198, bh*0.965]
+                    [bw*0.085, bh*0.600], [bw*0.315, bh*0.460], 
+                    [bw*0.410, bh*0.785], [bw*0.185, bh*0.925]
                 ], dtype=float)
                 
-                # 3. Caneca Centro (Frontal Cilíndrica)
+                # 3. Caneca Centro
                 pts_center = np.array([
                     [bw*0.378, bh*0.428], [bw*0.628, bh*0.428], 
                     [bw*0.628, bh*0.812], [bw*0.378, bh*0.812]
                 ], dtype=float)
                 
-                # 4. Caneca Direita (Visão Lateral com Alça à Direita)
+                # 4. Caneca Direita
                 pts_right = np.array([
                     [bw*0.665, bh*0.488], [bw*0.915, bh*0.488], 
                     [bw*0.915, bh*0.885], [bw*0.665, bh*0.885]
@@ -96,7 +94,7 @@ else:
 
                 # APLICAÇÃO DAS CAMADAS E MÁSCARAS
                 
-                # 1. Visão Superior Plana (Arte Completa)
+                # 1. Visão Superior Plana
                 result = apply_precise_curved_perspective(base_image, art, pts_top, arc_top=0.0, arc_bottom=0.0)
 
                 # 2. Caneca Direita (Fatia 52% a 100%)
@@ -107,9 +105,9 @@ else:
                 art_center = crop_art(art, 0.25, 0.75)
                 result = apply_precise_curved_perspective(result, art_center, pts_center, arc_top=0.012, arc_bottom=0.012)
 
-                # 4. Caneca Esquerda (Fatia 0% a 48% - Sobrepõe a do centro com curva cônica)
+                # 4. Caneca Esquerda REFINADA (Fatia 0% a 48% - Arc_top ajustado para -0.025)
                 art_left = crop_art(art, 0.0, 0.48)
-                result = apply_precise_curved_perspective(result, art_left, pts_left, arc_top=-0.035, arc_bottom=0.025)
+                result = apply_precise_curved_perspective(result, art_left, pts_left, arc_top=-0.025, arc_bottom=0.020)
 
                 # Nome do Cliente
                 if client_name:
